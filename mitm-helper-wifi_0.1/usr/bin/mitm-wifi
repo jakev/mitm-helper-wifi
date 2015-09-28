@@ -1,0 +1,522 @@
+#!/usr/bin/env python
+
+"""Helper script for starting and stopping hostpad AP"""
+
+from argparse import ArgumentParser
+import os
+import os.path
+import sys
+import signal
+import time
+import tempfile
+import subprocess
+import ConfigParser
+
+DEFAULT_CONFIG_FILE = '/etc/mitm-wifi.conf'
+DEFAULT_LAN_INTERFACE = 'eth0'
+DEFAULT_WLAN_INTERFACE = 'wlan0'
+
+# Default config options
+DEFAULT_SSID = 'TestNetwork'
+
+HOSTAPD_PID = '/var/run/mitm-wifi_hostapd.pid'
+DNSMASQ_PID = '/var/run/mitm-wifi_dnsmasq.pid'
+
+FLUSH_IPTABLES = 'iptables -t nat -F'
+POSTROUTE_IPTABLES = ('iptables -t nat -A POSTROUTING '
+                      '-s 10.6.9.0/24 -o _INT_ -j MASQUERADE')
+
+ENABLE_DNSMASQ = ('dnsmasq --no-hosts --interface _INT_ '
+                 '--no-poll '
+                 '--listen-address=10.6.9.1 --server=8.8.8.8 '
+                 '--dhcp-range=10.6.9.10,10.6.9.100,60m '
+                 '--dhcp-option=option:router,10.6.9.1 '
+                 '--dhcp-lease-max=50 '
+                 "--pid-file=%s" % DNSMASQ_PID)
+
+ENABLE_IP_FORWARD = 'sysctl -w net.ipv4.ip_forward=1'
+DISABLE_IP_FORWARD = 'sysctl -w net.ipv4.ip_forward=0'
+
+TEMPLATE_CONFIG = ("interface=_INT_\n"
+                   "hw_mode=g\n"
+                   "channel=1\n"
+                   "driver=nl80211\n"
+                   "ieee80211d=1\n"
+                   "country_code=US\n"
+                   "ieee80211n=1\n"
+                   "wmm_enabled=1\n"
+                   "ssid=_SSID_\n"
+                   "auth_algs=1\n"
+                   "wpa=2\n"
+                   "wpa_key_mgmt=WPA-PSK\n"
+                   "rsn_pairwise=CCMP\n"
+                   "wpa_passphrase=_KEY_\n")
+
+main_class = None
+
+class MitmWifi(object):
+
+    """Class for all functionality"""
+
+    iptables_configured = False
+    ip_forwarding_configured = False
+    interface_up = False
+
+    config_file = None
+    hostapd_config = None
+    verbose = None
+    lan_interface = None
+    wlan_interface = None
+
+    def debug(self, message):
+
+        """Write a message only if verbose"""
+
+        if self.verbose:
+            print "[Debug] %s " % message
+
+    @classmethod
+    def error(cls, error):
+
+        """Write an error to stderr"""
+
+        sys.stderr.write("[Error] %s\n" % error)
+
+    @classmethod
+    def is_root(cls):
+
+        """Check if running with privileges"""
+
+        if os.geteuid() != 0:
+            return False
+        else:
+            return True
+
+    @classmethod
+    def safe_get(cls, config, section, value, default):
+
+        """Get value, handle exception, return default"""
+
+        try:
+            return config.get(section, value)
+
+        except ConfigParser.NoOptionError:
+            return default
+
+    @classmethod
+    def kill_pid(cls, pid):
+
+        """Kill process by PID"""
+
+        os.kill(pid, signal.SIGTERM)
+
+        return 0
+
+    @classmethod
+    def get_pid(cls, pid_file):
+
+        """Extract PID from file"""
+
+        with open(pid_file, 'r') as pid_f:
+            return int(pid_f.read())
+
+    def run(self, config):
+
+        """Initiate start sequence"""
+
+        self.config_file = config['config_file']
+        self.verbose = config['verbose']
+        self.lan_interface = config['lan_interface']
+        self.wlan_interface = config['wlan_interface']
+
+        self.debug("Checking for root privs...")
+        if not self.is_root():
+            self.error("You need root permissions to do use this script!")
+            return -1
+
+        self.debug("Parsing config file...")
+        config, overrides, rules = self.parse_config()
+
+        if self.validate_config(config) != 0:
+            return -2
+
+        # Confirm adapter is ok.
+        if self.check_wlan() != 0:
+            self.error("Unable to get information about interface '%s'!"
+                        % self.wlan_interface)
+            return -3
+
+        # Generate the dynamic hostapd configuration.
+        hostapd_file = self.generate_config(config, overrides)
+
+        if hostapd_file == None:
+            self.error("Error generating hostapd file!")
+            return -4
+
+        # Unblock WiFi
+        self.debug("Unblocking WiFi")
+        if self.sh_exec("nmcli nm wifi off") != 0:
+            self.error("Unable to execute 'nmcli'!")
+            exit(self.shutdown())
+
+        if self.sh_exec("rfkill unblock wlan") != 0:
+            self.error("Unable to execute 'rfkill'!")
+            exit(self.shutdown())
+
+        # Bring down WLAN interface
+        self.debug("Bringing %s down..." % self.wlan_interface)
+        cmd = "ifconfig %s down" % self.wlan_interface
+        if self.sh_exec(cmd) != 0:
+            self.error("Unable to bring interface down!")
+            exit(self.shutdown())
+
+        # Start hostapd
+        self.debug("Starting hostapd...")
+        cmd = "hostapd -P %s -B %s" % (HOSTAPD_PID, self.hostapd_config)
+
+        if self.sh_exec(cmd) != 0:
+            self.error("Unable to start hostapd!")
+            exit(self.shutdown())
+
+        # Assign IP to WLAN interface
+        self.debug("Assigning IP address to WLAN interface")
+        cmd = ("ifconfig %s 10.6.9.1 netmask 255.255.255.0"
+                % self.wlan_interface)
+        if self.sh_exec(cmd) != 0:
+            self.error("Unable to assign IP address!")
+            exit(self.shutdown())
+
+        self.interface_up = True
+
+        # Force stop dnsmasq
+        self.debug("Forcefully killing dnsmasq instances...")
+        self.sh_exec("pkill dnsmasq")
+
+        # Start dnsmasq
+        self.debug("Enabling dnsmasq...")
+        if self.start_dnsmasq() != 0:
+            self.error("Unable to start dnsmasq!")
+            exit(self.shutdown())
+
+        # Flush & start IP tables
+        self.debug("Configuring iptables...")
+        if self.configure_iptables(rules) != 0:
+            self.error("Unable to configure iptables!")
+            exit(self.shutdown())
+
+        self.iptables_configured = True
+
+        # Enable IP forwarding
+        self.debug("Enabling IP forwarding...")
+        if self.enable_ip_forwarding() != 0:
+            self.error("Unable to enable IP forwarding!")
+            exit(self.shutdown())
+
+        self.ip_forwarding_configured = True
+
+        print "Setup complete! You can now join your device."
+        print ""
+        print "  SSID : %s" % config['ssid']
+        print "  Passphrase : %s" % config['key']
+        print ""
+        print "Press Ctrl+C to cancel"
+
+        # Run forever!
+        while 1:
+            time.sleep(1000)
+
+    def shutdown(self):
+
+        """Shutdown sequence"""
+
+        if self.ip_forwarding_configured:
+            self.debug("Removing IP forwarding...")
+            if self.disable_ip_forwarding() != 0:
+                self.error("Unable to disable IP forwarding!")
+
+        if self.iptables_configured:
+            self.debug("Removing iptables rules...")
+            if self.flush_iptables() != 0:
+                self.error("Unable to flush iptables!")
+
+        if os.path.isfile(HOSTAPD_PID):
+
+            pid = self.get_pid(HOSTAPD_PID)
+            self.kill_pid(pid)
+
+        if os.path.isfile(DNSMASQ_PID):
+
+            pid = self.get_pid(DNSMASQ_PID)
+            self.kill_pid(pid)
+
+        if self.interface_up:
+            self.debug("Bringing interface down...")
+            cmd = "ifconfig %s down" % self.wlan_interface
+            if self.sh_exec(cmd) != 0:
+                self.error("Unable to bring interface down!")
+
+
+        return 0
+
+    def check_wlan(self):
+
+        """Try to get interface info on WLAN int"""
+
+        cmd = "iw dev %s info" % self.wlan_interface
+
+        return self.sh_exec(cmd)
+
+    def generate_config(self, config, overrides):
+
+        """Open temp named file, dynamically create config"""
+
+        tmp_file = tempfile.NamedTemporaryFile("w+b")
+
+        self.hostapd_config = tmp_file.name
+
+        self.debug("Generating hostapd config at '%s'" %
+                    self.hostapd_config)
+
+        content = TEMPLATE_CONFIG
+
+        content = content.replace('_INT_', self.wlan_interface)
+        content = content.replace('_KEY_', config['key'])
+        content = content.replace('_SSID_', config['ssid'])
+
+        # Apply overrides.
+        for override in overrides:
+            content = "%s%s\n" % (content, override)
+
+        tmp_file.write(content)
+        tmp_file.flush()
+
+        return tmp_file
+
+    def parse_config(self):
+
+        """Parse the received config file and generate rules"""
+
+        rules = []
+        overrides = []
+
+        global_settings = {'ssid' : DEFAULT_SSID,
+                           'key' : None}
+
+        config = ConfigParser.ConfigParser()
+
+        config.read(self.config_file)
+
+        for section in config.sections():
+
+            self.debug("Parsing section '%s'" % section)
+
+            # Parse Global settings.
+            if section == "Global":
+
+                ssid = self.safe_get(config, section, 'ssid',
+                                     global_settings['ssid'])
+                key = self.safe_get(config, section, 'key',
+                                     global_settings['key'])
+
+                # Set new values.
+                global_settings['ssid'] = ssid
+                global_settings['key'] = key
+
+            # hostapd override section
+            elif section == "Override":
+
+                for name, value in config.items(section):
+                    overrides.append("%s=%s" % (name, value))
+
+            # Rest is processed as rules
+            else:
+                try:
+                    proxy_port = config.get(section, 'proxyport')
+                    forwards_raw = config.get(section, 'forwardports')
+
+                    forwards_list = forwards_raw.split(',')
+
+                    for forward_port in forwards_list:
+
+                        rules.append("iptables -t nat -A PREROUTING "
+                                     "-p tcp --dport %s -m tcp -j REDIRECT "
+                                     "--to-ports %s" %
+                                     (forward_port, proxy_port))
+
+                except ConfigParser.NoOptionError:
+                    self.error("Unable to parse section '%s'! Skipping."
+                               % section)
+
+        if len(rules) == 0:
+            rules = None
+
+        return global_settings, overrides, rules
+
+    def validate_config(self, config):
+
+        """Confirm the config is relatively valid"""
+
+        # key must be not null, greater than 8
+        key = config['key']
+
+        if key == None:
+            self.error("Key cannot be null!")
+            return -1
+
+        if len(key) < 8:
+            self.error("Key cannot be less than 8 characters!")
+            return -2
+
+        ssid = config['ssid']
+
+        if ssid == '':
+            self.error("SSID cannot be blank!")
+            return -3
+
+        return 0
+
+    def sh_exec(self, cmd):
+
+        """Shell execution helper"""
+
+        self.debug("Execing: '%s'" % cmd)
+
+        return subprocess.call(cmd, shell=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    def enable_ip_forwarding(self):
+
+        """Enable IP forwarding in kernel"""
+
+        return self.sh_exec(ENABLE_IP_FORWARD)
+
+    def disable_ip_forwarding(self):
+
+        """Disable IP forwarding in kernel"""
+
+        return self.sh_exec(DISABLE_IP_FORWARD)
+
+    def flush_iptables(self):
+
+        """Flush iptables rules"""
+
+        return self.sh_exec(FLUSH_IPTABLES)
+
+    def apply_forwarding_rules(self, rules):
+
+        """Apply each of the port forwarding rules"""
+
+        for rule in rules:
+
+            rtn = self.sh_exec(rule)
+
+            if rtn != 0:
+                self.error("Unable to apply rule: %s" % rule)
+                return rtn
+
+        return 0
+
+    def complete_iptables(self):
+
+        """Apply remaining iptables rules"""
+
+        rtn = self.sh_exec(POSTROUTE_IPTABLES.replace(
+                                "_INT_", self.wlan_interface))
+
+        if rtn != 0:
+            self.error("Unable to setup postrouting!")
+            return rtn
+
+        return 0
+
+    def configure_iptables(self, rules):
+
+        """Setup new iptables rules"""
+
+        rtn = 0
+
+        rtn = self.flush_iptables()
+
+        if rtn != 0:
+            self.error("Unable to flush iptables!")
+            return rtn
+
+        rtn = self.apply_forwarding_rules(rules)
+
+        if rtn != 0:
+            self.error("Unable to configure rules iptables!")
+            return rtn
+
+        rtn = self.complete_iptables()
+
+        if rtn != 0:
+            self.error("Unable to complete iptables configuration!")
+            return rtn
+
+        return 0
+
+    def start_dnsmasq(self):
+
+        """Start dnsmasq"""
+
+        return self.sh_exec(ENABLE_DNSMASQ.replace(
+                               "_INT_", self.wlan_interface))
+
+    def start_pptp_service(self):
+
+        """Start the pptp service"""
+
+        return self.sh_exec('/etc/init.d/pptpd start')
+
+    def stop_pptp_service(self):
+
+        """Stop the pptp service"""
+
+        return self.sh_exec('/etc/init.d/pptpd stop')
+
+def signal_shutdown(signum, stack):
+
+    """Handle shutdown signals"""
+
+    print "Shutdown sequence starting!"
+
+    exit(main_class.shutdown())
+
+def main():
+
+    """Main Execution"""
+
+    global main_class
+
+    config = {}
+
+    # Signals are fun.
+    signal.signal(signal.SIGINT, signal_shutdown)
+
+    parser = ArgumentParser(description='Start and stop hostapd AP.')
+    parser.add_argument('-v', '--verbose', action='store_const',
+                    dest='verbose', const=True, default=False,
+                    help="Be verbose.")
+    parser.add_argument('-l', '--lan', action='store',
+                    dest='lan_interface', default=DEFAULT_LAN_INTERFACE,
+                    help='Which interface to forward out (default: eth0)')
+    parser.add_argument('-w', '--wlan', action='store',
+                    dest='wlan_interface', default=DEFAULT_WLAN_INTERFACE,
+                    help='USB WiFi assigned interface (default: wlan0)')
+    parser.add_argument('-c', '--config_file', action='store',
+                    dest='config_file', default=DEFAULT_CONFIG_FILE)
+
+
+    args = parser.parse_args()
+
+    config['config_file'] = args.config_file
+    config['verbose'] = args.verbose
+    config['lan_interface'] = args.lan_interface
+    config['wlan_interface'] = args.wlan_interface
+
+    main_class = MitmWifi()
+
+    return main_class.run(config)
+
+if __name__ == "__main__":
+    sys.exit(main())
