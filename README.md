@@ -74,6 +74,8 @@ ForwardPorts:1234
 
 This configuration can be found in the file `sample.mitm-wifi.conf`. Note that the section names in the `mitm-wifi.conf` can be named anything except 'Global' and 'Override'.
 
+*Side note for Burp users: You'll likely need to listen on all interfaces AND enable the invisible proxying to have your setup work properly.*
+
 #### Starting the WiFi AP
 Once you're ready to start, run:
 
