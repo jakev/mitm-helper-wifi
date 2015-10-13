@@ -5,6 +5,7 @@
 from argparse import ArgumentParser
 import os
 import os.path
+import platform
 import sys
 import signal
 import time
@@ -21,6 +22,9 @@ DEFAULT_SSID = 'TestNetwork'
 
 HOSTAPD_PID = '/var/run/mitm-wifi_hostapd.pid'
 DNSMASQ_PID = '/var/run/mitm-wifi_dnsmasq.pid'
+
+VIVID_NMCLI_CMD = "nmcli r wifi off"
+PRE_VIVID_NMCLI_CMD = "nmcli nm wifi off"
 
 FLUSH_IPTABLES = 'iptables -t nat -F'
 POSTROUTE_IPTABLES = ('iptables -t nat -A POSTROUTING '
@@ -93,6 +97,25 @@ class MitmWifi(object):
             return True
 
     @classmethod
+    def is_vivid(cls):
+
+        distro = platform.linux_distribution()
+
+        if distro[0].lower() == "ubuntu":
+
+            try:
+                version =  int(distro[1].split('.')[0])
+                if version >= 15:
+                    return True
+                else:
+                    return False
+
+            except ValueError, IndexError:
+                return False
+        else:
+            return False
+
+    @classmethod
     def safe_get(cls, config, section, value, default):
 
         """Get value, handle exception, return default"""
@@ -155,7 +178,11 @@ class MitmWifi(object):
 
         # Unblock WiFi
         self.debug("Unblocking WiFi")
-        if self.sh_exec("nmcli nm wifi off") != 0:
+
+        # The command is different for Vivid+
+        nmcli_cmd = VIVID_NMCLI_CMD if self.is_vivid() else PRE_VIVID_NMCLI_CMD
+
+        if self.sh_exec(nmcli_cmd) != 0:
             self.error("Unable to execute 'nmcli'!")
             exit(self.shutdown())
 
@@ -405,6 +432,9 @@ class MitmWifi(object):
     def apply_forwarding_rules(self, rules):
 
         """Apply each of the port forwarding rules"""
+
+        if rules == None:
+            return 0
 
         for rule in rules:
 
