@@ -451,7 +451,7 @@ class MitmWifi(object):
         """Apply remaining iptables rules"""
 
         rtn = self.sh_exec(POSTROUTE_IPTABLES.replace(
-                                "_INT_", self.wlan_interface))
+                                "_INT_", self.lan_interface))
 
         if rtn != 0:
             self.error("Unable to setup postrouting!")
