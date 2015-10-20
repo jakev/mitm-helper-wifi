@@ -14,6 +14,7 @@ import subprocess
 import ConfigParser
 
 DEFAULT_CONFIG_FILE = '/etc/mitm-wifi.conf'
+DEFAULT_DNS_SERVER = '8.8.8.8'
 DEFAULT_LAN_INTERFACE = 'eth0'
 DEFAULT_WLAN_INTERFACE = 'wlan0'
 
@@ -32,7 +33,7 @@ POSTROUTE_IPTABLES = ('iptables -t nat -A POSTROUTING '
 
 ENABLE_DNSMASQ = ('dnsmasq --no-hosts --interface _INT_ '
                  '--no-poll '
-                 '--listen-address=10.6.9.1 --server=8.8.8.8 '
+                 '--listen-address=10.6.9.1 --server=_DNS_ '
                  '--dhcp-range=10.6.9.10,10.6.9.100,60m '
                  '--dhcp-option=option:router,10.6.9.1 '
                  '--dhcp-lease-max=50 '
@@ -71,6 +72,7 @@ class MitmWifi(object):
     verbose = None
     lan_interface = None
     wlan_interface = None
+    dns_server = None
 
     def debug(self, message):
 
@@ -99,18 +101,22 @@ class MitmWifi(object):
     @classmethod
     def is_vivid(cls):
 
+        """Determine if running Ubuntu Vivid or newer"""
+
         distro = platform.linux_distribution()
 
         if distro[0].lower() == "ubuntu":
 
             try:
-                version =  int(distro[1].split('.')[0])
+                version = int(distro[1].split('.')[0])
                 if version >= 15:
                     return True
                 else:
                     return False
 
-            except ValueError, IndexError:
+            except ValueError:
+                return False
+            except IndexError:
                 return False
         else:
             return False
@@ -151,6 +157,7 @@ class MitmWifi(object):
         self.verbose = config['verbose']
         self.lan_interface = config['lan_interface']
         self.wlan_interface = config['wlan_interface']
+        self.dns_server = config['dns_server']
 
         self.debug("Checking for root privs...")
         if not self.is_root():
@@ -489,8 +496,11 @@ class MitmWifi(object):
 
         """Start dnsmasq"""
 
-        return self.sh_exec(ENABLE_DNSMASQ.replace(
-                               "_INT_", self.wlan_interface))
+        cmd = ENABLE_DNSMASQ
+        cmd = cmd.replace("_INT_", self.wlan_interface)
+        cmd = cmd.replace("_DNS_", self.dns_server)
+
+        return self.sh_exec(cmd)
 
     def start_pptp_service(self):
 
@@ -524,6 +534,9 @@ def main():
     signal.signal(signal.SIGINT, signal_shutdown)
 
     parser = ArgumentParser(description='Start and stop hostapd AP.')
+    parser.add_argument('-s', '--dns-server', action='store',
+                    dest='dns_server', default=DEFAULT_DNS_SERVER,
+                    help='The upstream DNS server to use (default: 8.8.8.8)')
     parser.add_argument('-v', '--verbose', action='store_const',
                     dest='verbose', const=True, default=False,
                     help="Be verbose.")
@@ -543,6 +556,7 @@ def main():
     config['verbose'] = args.verbose
     config['lan_interface'] = args.lan_interface
     config['wlan_interface'] = args.wlan_interface
+    config['dns_server'] = args.dns_server
 
     main_class = MitmWifi()
 
