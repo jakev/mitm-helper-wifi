@@ -31,6 +31,18 @@ Key=M0bileisfuN
 
 What does this do? This configures a 802.11g network on channel 1, using WPA2 PSK/CCMP. If this doesn't work for you, check out the next section on overriding.
 
+#### Users
+If you're connecting multiple devices to your AP, for example, 1 rooted device you'd like to intercept traffic, and 1 device you're not so concerted with all (or the same) traffic, you can define users.  Users are based on MAC addresses.  By default, `mitm-wifi` supports 5 users: user0 - user4.  Users can then be applied to whichever proxy rule section you'd like.
+
+The following adds a host, 00:11:22:33:44:55 to user group "user0":
+
+```
+[Global]
+Ssid=CoolNetwork
+Key=M0bileisfuN
+user0=00:11:22:33:44:55
+```
+
 ### hostapd Overriding
 If for some reason the `hostapd` configuration I'm using by default doesnt fit your setup, powerusers can manually override any `hostapd` configuration settings. You're own your own for validation here, and you might not be able to achieve exactly what you'd like.
 
@@ -74,6 +86,22 @@ ForwardPorts:1234
 
 This configuration can be found in the file `sample.mitm-wifi.conf`. Note that the section names in the `mitm-wifi.conf` can be named anything except 'Global' and 'Override'.
 
+#### User Specific Rules
+If for some reason you'd only like to capture ports 1234 on a specifc device (for example 00:11:22:33:44:55 above), you can apply the proxy rules to specific user or comma delimited users:
+
+```
+[Global]
+...
+user0=00:11:22:33:44:55
+
+...
+
+[Binary Coolness Proxy]
+ProxyPort:8888
+ForwardPort:1234
+UserIds:user0
+```
+
 *Side note for Burp users: You'll likely need to listen on all interfaces AND enable the invisible proxying to have your setup work properly.*
 
 #### Starting the WiFi AP
@@ -88,6 +116,10 @@ If you want to specify a custom configuration file, you can do so with the `-c` 
 By default, `hostapd` will attempt to find the USB dongle on wlan0, but if your adapter is named different, use the `-w` argument:
 
     $ sudo mitm-wifi -v -w ath1
+
+If your host machine is connected to a VPN, you may also need to tell `mitm-wifi` about the upstream DNS servers provided by the VPN client.  For example, if your host machine was using a DNS server of 172.16.1.50, you can tell `mitm-wifi` to use this DNS server, using the `-s` argument:
+
+    $ sudo mitm-wifi -v -s 172.16.1.50
 
 ### Stopping the WiFi AP
 By hitting Ctrl+C, the script will begin the shutdown process.

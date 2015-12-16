@@ -6,6 +6,7 @@ from argparse import ArgumentParser
 import os
 import os.path
 import platform
+import re
 import sys
 import signal
 import time
@@ -34,6 +35,7 @@ POSTROUTE_IPTABLES = ('iptables -t nat -A POSTROUTING '
 ENABLE_DNSMASQ = ('dnsmasq --no-hosts --interface _INT_ '
                  '--no-poll '
                  '--listen-address=10.6.9.1 --server=_DNS_ '
+                 '_HOSTS_ '
                  '--dhcp-range=10.6.9.10,10.6.9.100,60m '
                  '--dhcp-option=option:router,10.6.9.1 '
                  '--dhcp-lease-max=50 '
@@ -57,6 +59,14 @@ TEMPLATE_CONFIG = ("interface=_INT_\n"
                    "rsn_pairwise=CCMP\n"
                    "wpa_passphrase=_KEY_\n")
 
+RESERVED_IPS = ('10.6.9.101',
+                '10.6.9.102',
+                '10.6.9.103',
+                '10.6.9.104',
+                '10.6.9.105')
+
+MAX_USERS = 5
+
 main_class = None
 
 class MitmWifi(object):
@@ -73,6 +83,7 @@ class MitmWifi(object):
     lan_interface = None
     wlan_interface = None
     dns_server = None
+    user_list = [None, None, None, None, None]
 
     def debug(self, message):
 
@@ -347,10 +358,24 @@ class MitmWifi(object):
             # Parse Global settings.
             if section == "Global":
 
+                # First get the global parameters
                 ssid = self.safe_get(config, section, 'ssid',
                                      global_settings['ssid'])
                 key = self.safe_get(config, section, 'key',
                                      global_settings['key'])
+
+                # Get the user information
+                i = 0
+                while i < MAX_USERS:
+                    user_name = "user%d" % i
+                    mac = self.safe_get(config, section, user_name, None)
+                    if mac is not None:
+                        if self.is_valid_mac(mac):
+                            self.debug("Adding user%d : %s" % (i, mac))
+                            self.user_list[i] = mac
+                        else:
+                            self.error("MAC not valid, skipping!")
+                    i += 1
 
                 # Set new values.
                 global_settings['ssid'] = ssid
@@ -370,12 +395,43 @@ class MitmWifi(object):
 
                     forwards_list = forwards_raw.split(',')
 
-                    for forward_port in forwards_list:
+                    # If no users, we can do this easily
+                    user_ids = self.safe_get(config, section, 'userids', None)
 
-                        rules.append("iptables -t nat -A PREROUTING "
-                                     "-p tcp --dport %s -m tcp -j REDIRECT "
-                                     "--to-ports %s" %
-                                     (forward_port, proxy_port))
+                    if user_ids is None:
+                        for forward_port in forwards_list:
+
+                            rules.append("iptables -t nat -A PREROUTING "
+                                         "-p tcp --dport %s -m tcp -j REDIRECT "
+                                         "--to-ports %s" %
+                                         (forward_port, proxy_port))
+
+                    # There are users. Ok
+                    else:
+                        users = user_ids.split(',')
+
+                        for user in users:
+                            # Is the name valid?
+                            if not self.is_valid_user(user):
+                                self.error("Found invalid user: %s, skipping!"
+                                                                        % user)
+                                continue
+
+                            # Is the number used?
+                            user_num = int(user.replace('user', ''))
+                            if self.user_list[user_num] is None:
+                                self.error("user%d is not defined, skipping!"
+                                                                    % user_num)
+                                continue
+
+                            # Rules per port, per user
+                            for forward_port in forwards_list:
+
+                                rules.append("iptables -t nat -A PREROUTING "
+                                             "-s %s -p tcp --dport %s -m tcp "
+                                             "-j REDIRECT --to-ports %s" %
+                                             (RESERVED_IPS[user_num],
+                                              forward_port, proxy_port))
 
                 except ConfigParser.NoOptionError:
                     self.error("Unable to parse section '%s'! Skipping."
@@ -408,6 +464,33 @@ class MitmWifi(object):
             return -3
 
         return 0
+
+    @classmethod
+    def is_valid_mac(cls, mac):
+
+        """Confirm supplied value is a MAC address"""
+
+        if re.match("^([0-9A-Fa-f]{2}:){5}([0-9A-Fa-f]{2})$", mac):
+            return True
+        else:
+            return False
+
+    @classmethod
+    def is_valid_user(cls, user_name):
+
+        """Confirm supplied value is a user#"""
+
+        if len(user_name) < 5:
+            return False
+
+        if user_name[0:4] == "user":
+            try:
+                num = int(user_name.replace('user', ''))
+                if num < MAX_USERS:
+                    return True
+            except ValueError:
+                return False
+        return False
 
     def sh_exec(self, cmd):
 
@@ -499,6 +582,17 @@ class MitmWifi(object):
         cmd = ENABLE_DNSMASQ
         cmd = cmd.replace("_INT_", self.wlan_interface)
         cmd = cmd.replace("_DNS_", self.dns_server)
+
+        hosts = ""
+        i = 0
+        while i < MAX_USERS:
+
+            if self.user_list[i] is not None:
+                hosts += ("--dhcp-host=%s,%s "
+                            % (self.user_list[i], RESERVED_IPS[i]))
+            i += 1
+
+        cmd = cmd.replace("_HOSTS_", hosts)
 
         return self.sh_exec(cmd)
 
