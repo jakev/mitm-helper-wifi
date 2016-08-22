@@ -39,6 +39,7 @@ ENABLE_DNSMASQ = ('dnsmasq --no-hosts --interface _INT_ '
                  '--dhcp-range=10.6.9.10,10.6.9.100,60m '
                  '--dhcp-option=option:router,10.6.9.1 '
                  '--dhcp-lease-max=50 '
+                 '--host-record=Burp,burp,10.6.9.1 '
                  "--pid-file=%s" % DNSMASQ_PID)
 
 ENABLE_IP_FORWARD = 'sysctl -w net.ipv4.ip_forward=1'
