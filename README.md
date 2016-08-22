@@ -32,9 +32,9 @@ Key=M0bileisfuN
 What does this do? This configures a 802.11g network on channel 1, using WPA2 PSK/CCMP. If this doesn't work for you, check out the next section on overriding.
 
 #### Users
-If you're connecting multiple devices to your AP, for example, 1 rooted device you'd like to intercept traffic, and 1 device you're not so concerted with all (or the same) traffic, you can define users.  Users are based on MAC addresses.  By default, `mitm-wifi` supports 5 users: user0 - user4.  Users can then be applied to whichever proxy rule section you'd like.
+If you're connecting multiple devices to your AP, for example, 1 rooted device you'd like to intercept traffic, and 1 device you're not so concerned with all (or the same) traffic, you can define users.  Users are based on MAC addresses.  By default, `mitm-wifi` supports 5 users: user0 - user4.  Users can then be applied to whichever proxy rule section you'd like.
 
-The following adds a host, 00:11:22:33:44:55 to user group "user0":
+The following adds the host 00:11:22:33:44:55 to user group "user0":
 
 ```
 [Global]
