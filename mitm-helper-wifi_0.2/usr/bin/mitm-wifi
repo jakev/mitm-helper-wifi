@@ -118,7 +118,6 @@ class MitmWifi(object):
         distro = platform.linux_distribution()
 
         if distro[0].lower() == "ubuntu":
-
             try:
                 version = int(distro[1].split('.')[0])
                 if version >= 15:
@@ -130,6 +129,11 @@ class MitmWifi(object):
                 return False
             except IndexError:
                 return False
+
+        # Kali uses the same "vivid" syntax
+        elif distro[0].lower() == "kali":
+            return True
+
         else:
             return False
 
