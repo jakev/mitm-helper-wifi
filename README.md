@@ -16,7 +16,21 @@ To download and setup the tool, run the following commands:
     $ git clone https://github.com/jakev/mitm-helper-wifi
     $ cd mitm-helper-wifi
     $ sudo ./install_dependencies.sh
-    $ sudo dpkg -i build/mitm-helper-wifi_0.1.deb
+    $ sudo dpkg -i build/mitm-helper-wifi_*.deb
+
+### Supported OSes
+The following operating systems are fully supported:
+
+* Ubuntu 14 - 16
+
+The following systems are known to work, but require manual dependency installation:
+
+* Kali Linux "Sana"
+* Kali Linux "Kali Rolling"
+
+Manual dependency installation should be as simple as:
+
+    $ sudo apt-get install dnsmasq hostapd iptables python
 
 ### Global Settings
 I tried to make configuration of the tool both straightforward and flexible. I use a TP Link TL-WN722N, that cost me about 12 dollars on Amazon and does everything I need. If you use a similiar adapter, your setup should work completely out of the box.

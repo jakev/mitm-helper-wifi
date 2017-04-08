@@ -6,7 +6,7 @@ if [ "$(id -u)" != "0" ]; then
    exit 1
 fi
 
-# Determine if we are Ubuntu 14/15. For other operating system, do not 
+# Determine if we are Ubuntu 14-16. For other operating system, do not
 # continue.  For older (or newer) versions of Ubuntu, display 
 # warning but try anyways.
 ver=$(lsb_release -d|awk -F"\t" '{print $2}')
@@ -18,7 +18,7 @@ if [ "$os_ver" = "Ubuntu" ]; then
     ubuntu_ver=$(echo $ver | awk  '{ string=substr($0, 1, 10); print string; }' )
 
     # Is it the supported one?
-    if [ "$ubuntu_ver" = "Ubuntu 14." -o "$ubuntu_ver" = "Ubuntu 15." ]; then
+    if [ "$ubuntu_ver" = "Ubuntu 14." -o "$ubuntu_ver" = "Ubuntu 15." -o "$ubuntu_ver" = "Ubuntu 16." ]; then
         echo "[+] Supported Ubuntu detected."
     else
         echo "[WARNING] It looks like you're using Ubuntu, but not the offically supported version."
