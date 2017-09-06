@@ -33,14 +33,14 @@ POSTROUTE_IPTABLES = ('iptables -t nat -A POSTROUTING '
                       '-s 10.6.9.0/24 -o _INT_ -j MASQUERADE')
 
 ENABLE_DNSMASQ = ('dnsmasq --no-hosts --interface _INT_ '
-                 '--no-poll '
-                 '--listen-address=10.6.9.1 --server=_DNS_ '
-                 '_HOSTS_ '
-                 '--dhcp-range=10.6.9.10,10.6.9.100,60m '
-                 '--dhcp-option=option:router,10.6.9.1 '
-                 '--dhcp-lease-max=50 '
-                 '--host-record=Burp,burp,10.6.9.1 '
-                 "--pid-file=%s" % DNSMASQ_PID)
+                  '--no-poll '
+                  '--listen-address=10.6.9.1 --server=_DNS_ '
+                  '_HOSTS_ '
+                  '--dhcp-range=10.6.9.10,10.6.9.100,60m '
+                  '--dhcp-option=option:router,10.6.9.1 '
+                  '--dhcp-lease-max=50 '
+                  '--host-record=Burp,burp,10.6.9.1 '
+                  "--pid-file=%s" % DNSMASQ_PID)
 
 ENABLE_IP_FORWARD = 'sysctl -w net.ipv4.ip_forward=1'
 DISABLE_IP_FORWARD = 'sysctl -w net.ipv4.ip_forward=0'
@@ -66,9 +66,12 @@ RESERVED_IPS = ('10.6.9.101',
                 '10.6.9.104',
                 '10.6.9.105')
 
+VALID_MAC_PATTERN = re.compile("^([0-9A-Fa-f]{2}:){5}([0-9A-Fa-f]{2})$")
+
 MAX_USERS = 5
 
 main_class = None
+
 
 class MitmWifi(object):
 
@@ -120,10 +123,7 @@ class MitmWifi(object):
         if distro[0].lower() == "ubuntu":
             try:
                 version = int(distro[1].split('.')[0])
-                if version >= 15:
-                    return True
-                else:
-                    return False
+                return bool(version >= 15)
 
             except ValueError:
                 return False
@@ -165,15 +165,12 @@ class MitmWifi(object):
         with open(pid_file, 'r') as pid_f:
             return int(pid_f.read())
 
-    def run(self, config):
+    def run(self, in_config):
 
         """Initiate start sequence"""
 
-        self.config_file = config['config_file']
-        self.verbose = config['verbose']
-        self.lan_interface = config['lan_interface']
-        self.wlan_interface = config['wlan_interface']
-        self.dns_server = config['dns_server']
+        self.config_file = in_config['config_file']
+        self.verbose = in_config['verbose']
 
         self.debug("Checking for root privs...")
         if not self.is_root():
@@ -186,16 +183,27 @@ class MitmWifi(object):
         if self.validate_config(config) != 0:
             return -2
 
+        # Command line args supercede config params.
+        self.lan_interface = (config['lan']
+                              if in_config['lan_interface'] is None
+                              else in_config['lan_interface'])
+        self.wlan_interface = (config['wlan']
+                               if in_config['wlan_interface'] is None
+                               else in_config['wlan_interface'])
+        self.dns_server = (config['dns']
+                           if in_config['dns_server'] is None
+                           else in_config['dns_server'])
+
         # Confirm adapter is ok.
         if self.check_wlan() != 0:
             self.error("Unable to get information about interface '%s'!"
-                        % self.wlan_interface)
+                       % self.wlan_interface)
             return -3
 
         # Generate the dynamic hostapd configuration.
         hostapd_file = self.generate_config(config, overrides)
 
-        if hostapd_file == None:
+        if hostapd_file is None:
             self.error("Error generating hostapd file!")
             return -4
 
@@ -231,7 +239,7 @@ class MitmWifi(object):
         # Assign IP to WLAN interface
         self.debug("Assigning IP address to WLAN interface")
         cmd = ("ifconfig %s 10.6.9.1 netmask 255.255.255.0"
-                % self.wlan_interface)
+               % self.wlan_interface)
         if self.sh_exec(cmd) != 0:
             self.error("Unable to assign IP address!")
             exit(self.shutdown())
@@ -305,7 +313,6 @@ class MitmWifi(object):
             if self.sh_exec(cmd) != 0:
                 self.error("Unable to bring interface down!")
 
-
         return 0
 
     def check_wlan(self):
@@ -325,7 +332,7 @@ class MitmWifi(object):
         self.hostapd_config = tmp_file.name
 
         self.debug("Generating hostapd config at '%s'" %
-                    self.hostapd_config)
+                   self.hostapd_config)
 
         content = TEMPLATE_CONFIG
 
@@ -349,8 +356,13 @@ class MitmWifi(object):
         rules = []
         overrides = []
 
-        global_settings = {'ssid' : DEFAULT_SSID,
-                           'key' : None}
+        default_settings = {'lan': DEFAULT_LAN_INTERFACE,
+                            'wlan': DEFAULT_WLAN_INTERFACE,
+                            'dns': DEFAULT_DNS_SERVER,
+                            'ssid': DEFAULT_SSID,
+                            'key': None}
+
+        global_settings = dict()
 
         config = ConfigParser.ConfigParser()
 
@@ -363,11 +375,9 @@ class MitmWifi(object):
             # Parse Global settings.
             if section == "Global":
 
-                # First get the global parameters
-                ssid = self.safe_get(config, section, 'ssid',
-                                     global_settings['ssid'])
-                key = self.safe_get(config, section, 'key',
-                                     global_settings['key'])
+                # Get all globaal keys minus the users.
+                for key, default in default_settings.iteritems():
+                    global_settings[key] = self.safe_get(config, section, key, default)
 
                 # Get the user information
                 i = 0
@@ -381,10 +391,6 @@ class MitmWifi(object):
                         else:
                             self.error("MAC not valid, skipping!")
                     i += 1
-
-                # Set new values.
-                global_settings['ssid'] = ssid
-                global_settings['key'] = key
 
             # hostapd override section
             elif section == "Override":
@@ -419,14 +425,14 @@ class MitmWifi(object):
                             # Is the name valid?
                             if not self.is_valid_user(user):
                                 self.error("Found invalid user: %s, skipping!"
-                                                                        % user)
+                                           % user)
                                 continue
 
                             # Is the number used?
                             user_num = int(user.replace('user', ''))
                             if self.user_list[user_num] is None:
                                 self.error("user%d is not defined, skipping!"
-                                                                    % user_num)
+                                           % user_num)
                                 continue
 
                             # Rules per port, per user
@@ -454,7 +460,7 @@ class MitmWifi(object):
         # key must be not null, greater than 8
         key = config['key']
 
-        if key == None:
+        if key is None:
             self.error("Key cannot be null!")
             return -1
 
@@ -475,10 +481,7 @@ class MitmWifi(object):
 
         """Confirm supplied value is a MAC address"""
 
-        if re.match("^([0-9A-Fa-f]{2}:){5}([0-9A-Fa-f]{2})$", mac):
-            return True
-        else:
-            return False
+        return bool(re.match(VALID_MAC_PATTERN, mac))
 
     @classmethod
     def is_valid_user(cls, user_name):
@@ -504,7 +507,8 @@ class MitmWifi(object):
         self.debug("Execing: '%s'" % cmd)
 
         return subprocess.call(cmd, shell=True,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                               stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE)
 
     def enable_ip_forwarding(self):
 
@@ -528,7 +532,7 @@ class MitmWifi(object):
 
         """Apply each of the port forwarding rules"""
 
-        if rules == None:
+        if rules is None:
             return 0
 
         for rule in rules:
@@ -546,7 +550,7 @@ class MitmWifi(object):
         """Apply remaining iptables rules"""
 
         rtn = self.sh_exec(POSTROUTE_IPTABLES.replace(
-                                "_INT_", self.lan_interface))
+            "_INT_", self.lan_interface))
 
         if rtn != 0:
             self.error("Unable to setup postrouting!")
@@ -594,7 +598,7 @@ class MitmWifi(object):
 
             if self.user_list[i] is not None:
                 hosts += ("--dhcp-host=%s,%s "
-                            % (self.user_list[i], RESERVED_IPS[i]))
+                          % (self.user_list[i], RESERVED_IPS[i]))
             i += 1
 
         cmd = cmd.replace("_HOSTS_", hosts)
@@ -613,6 +617,8 @@ class MitmWifi(object):
 
         return self.sh_exec('/etc/init.d/pptpd stop')
 
+
+# pylint: disable=unused-argument
 def signal_shutdown(signum, stack):
 
     """Handle shutdown signals"""
@@ -620,6 +626,7 @@ def signal_shutdown(signum, stack):
     print "Shutdown sequence starting!"
 
     exit(main_class.shutdown())
+
 
 def main():
 
@@ -634,20 +641,19 @@ def main():
 
     parser = ArgumentParser(description='Start and stop hostapd AP.')
     parser.add_argument('-s', '--dns-server', action='store',
-                    dest='dns_server', default=DEFAULT_DNS_SERVER,
-                    help='The upstream DNS server to use (default: 8.8.8.8)')
+                        dest='dns_server', default=None,
+                        help='Upstream DNS server to use (default: 8.8.8.8)')
     parser.add_argument('-v', '--verbose', action='store_const',
-                    dest='verbose', const=True, default=False,
-                    help="Be verbose.")
+                        dest='verbose', const=True, default=False,
+                        help="Be verbose.")
     parser.add_argument('-l', '--lan', action='store',
-                    dest='lan_interface', default=DEFAULT_LAN_INTERFACE,
-                    help='Which interface to forward out (default: eth0)')
+                        dest='lan_interface', default=None,
+                        help='Which interface to forward out (default: eth0)')
     parser.add_argument('-w', '--wlan', action='store',
-                    dest='wlan_interface', default=DEFAULT_WLAN_INTERFACE,
-                    help='USB WiFi assigned interface (default: wlan0)')
+                        dest='wlan_interface', default=None,
+                        help='USB WiFi assigned interface (default: wlan0)')
     parser.add_argument('-c', '--config_file', action='store',
-                    dest='config_file', default=DEFAULT_CONFIG_FILE)
-
+                        dest='config_file', default=DEFAULT_CONFIG_FILE)
 
     args = parser.parse_args()
 
