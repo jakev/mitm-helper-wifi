@@ -40,6 +40,7 @@ ENABLE_DNSMASQ = ('dnsmasq --no-hosts --interface _INT_ '
                   '--dhcp-option=option:router,10.6.9.1 '
                   '--dhcp-lease-max=50 '
                   '--host-record=Burp,burp,10.6.9.1 '
+                  '_HOST_RECORDS_ '
                   "--pid-file=%s" % DNSMASQ_PID)
 
 ENABLE_IP_FORWARD = 'sysctl -w net.ipv4.ip_forward=1'
@@ -194,6 +195,15 @@ class MitmWifi(object):
                            if in_config['dns_server'] is None
                            else in_config['dns_server'])
 
+        raw_hostmap = (config['hostmap']
+                       if in_config['host_mapping'] is None
+                       else in_config['host_mapping'])
+
+        self.hostmap = self.parse_hostmap(raw_hostmap)
+        if self.hostmap is None:
+            self.error("Host map should be comma separated: hostname:IP")
+            return -5
+
         # Confirm adapter is ok.
         if self.check_wlan() != 0:
             self.error("Unable to get information about interface '%s'!"
@@ -323,6 +333,25 @@ class MitmWifi(object):
 
         return self.sh_exec(cmd)
 
+    def parse_hostmap(self, in_map):
+
+        """Parse and validate hostmap"""
+
+        hostmap_string = ""
+
+        if in_map is None:
+            return hostmap_string
+
+        try:
+            for host_map in in_map.split(','):
+                host, ip = host_map.split(':')
+                hostmap_string += "--host-record=%s,%s " % (host, ip)
+
+        except ValueError:
+            return None
+
+        return hostmap_string
+
     def generate_config(self, config, overrides):
 
         """Open temp named file, dynamically create config"""
@@ -360,6 +389,7 @@ class MitmWifi(object):
                             'wlan': DEFAULT_WLAN_INTERFACE,
                             'dns': DEFAULT_DNS_SERVER,
                             'ssid': DEFAULT_SSID,
+                            'hostmap': None,
                             'key': None}
 
         global_settings = dict()
@@ -591,6 +621,7 @@ class MitmWifi(object):
         cmd = ENABLE_DNSMASQ
         cmd = cmd.replace("_INT_", self.wlan_interface)
         cmd = cmd.replace("_DNS_", self.dns_server)
+        cmd = cmd.replace("_HOST_RECORDS_", self.hostmap)
 
         hosts = ""
         i = 0
@@ -652,8 +683,10 @@ def main():
     parser.add_argument('-w', '--wlan', action='store',
                         dest='wlan_interface', default=None,
                         help='USB WiFi assigned interface (default: wlan0)')
-    parser.add_argument('-c', '--config_file', action='store',
+    parser.add_argument('-c', '--config-file', action='store',
                         dest='config_file', default=DEFAULT_CONFIG_FILE)
+    parser.add_argument('-m', '--host-mapping', action='store',
+                        dest='host_mapping', default=None)
 
     args = parser.parse_args()
 
@@ -662,6 +695,7 @@ def main():
     config['lan_interface'] = args.lan_interface
     config['wlan_interface'] = args.wlan_interface
     config['dns_server'] = args.dns_server
+    config['host_mapping'] = args.host_mapping
 
     main_class = MitmWifi()
 

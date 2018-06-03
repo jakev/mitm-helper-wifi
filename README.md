@@ -131,6 +131,14 @@ By default, `hostapd` will attempt to find the USB dongle on wlan0, but if your 
 
     $ sudo mitm-wifi -v -w ath1
 
+If you want to set static A records, you can use the `-m` argument (or `hostmap` in the `Global` section of your config). The format should be:
+
+    hostname:IP[,hostname:IP]
+
+Example:
+
+    $ sudo mitm-wifi -v -w ath1 -m www.acme.com:10.6.9.1
+
 If your host machine is connected to a VPN, you may also need to tell `mitm-wifi` about the upstream DNS servers provided by the VPN client.  For example, if your host machine was using a DNS server of 172.16.1.50, you can tell `mitm-wifi` to use this DNS server, using the `-s` argument:
 
     $ sudo mitm-wifi -v -s 172.16.1.50
