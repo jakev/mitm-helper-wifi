@@ -132,7 +132,7 @@ class MitmWifi(object):
                 return False
 
         # Kali uses the same "vivid" syntax
-        elif distro[0].lower() == "kali":
+        elif distro[0].lower() == "kali" or distro[0].lower() == "kali-rolling":
             return True
 
         else:
