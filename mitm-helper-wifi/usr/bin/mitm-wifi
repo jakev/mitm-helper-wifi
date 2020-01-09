@@ -131,8 +131,8 @@ class MitmWifi(object):
             except IndexError:
                 return False
 
-        # Kali uses the same "vivid" syntax
-        elif distro[0].lower() == "kali" or distro[0].lower() == "kali-rolling":
+        # Kali (and Kali rolling) use the same "vivid" syntax
+        elif "kali" in distro or "kali-rolling" in distro:
             return True
 
         else:
