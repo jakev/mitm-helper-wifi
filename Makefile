@@ -1,7 +1,6 @@
 clean:
-	rm build/*.deb
+	rm *.deb
 
 package:
 	cd src; \
 		dpkg-buildpackage -us -uc -b
-	mv *_all.deb build/
