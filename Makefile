@@ -2,4 +2,6 @@ clean:
 	rm build/*.deb
 
 package:
-	dpkg-deb -b mitm-helper-wifi/ build
+	cd src; \
+		dpkg-buildpackage -us -uc -b
+	mv *_all.deb build/

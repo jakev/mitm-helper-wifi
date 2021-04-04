@@ -1,0 +1,11 @@
+Source: mitm-helper-wifi
+Section: base
+Priority: optional
+Build-Depends: debhelper (>= 9), dnsmasq, hostapd, iptables, python
+Maintainer: Jake Valletta
+
+Package: mitm-helper-wifi
+Section: base
+Priority: optional
+Architecture: all
+Description: Helper scripts for configuring a WiFi access point (AP) for performing man in the middle attacks. 

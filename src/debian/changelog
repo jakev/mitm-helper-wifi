@@ -1,0 +1,5 @@
+mitm-helper-wifi (0.5.0) unstable; urgency=medium
+
+  * Fixing bug with config file not properly copied on install.
+
+ -- Jake Valletta <javallet@gmail.com>  Sat, 03 Apr 2021 18:21:00 +0000

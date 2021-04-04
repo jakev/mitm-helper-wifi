@@ -1,0 +1,14 @@
+debhelper-build-stamp
+.DS_Store
+.debhelper
+*.deb
+*.dsc
+*.build
+*.buildinfo
+*.changes
+*.tar.gz
+*.log
+*.substvars
+/.vagrant
+/*/debian/mitm-helper-wifi
+/*/debian/files
