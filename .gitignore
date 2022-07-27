@@ -12,3 +12,4 @@ debhelper-build-stamp
 /.vagrant
 /*/debian/mitm-helper-wifi
 /*/debian/files
+venv/

@@ -12,7 +12,7 @@ import signal
 import time
 import tempfile
 import subprocess
-import ConfigParser
+import configparser
 
 DEFAULT_CONFIG_FILE = '/etc/mitm-wifi.conf'
 DEFAULT_DNS_SERVER = '8.8.8.8'
@@ -95,7 +95,7 @@ class MitmWifi(object):
         """Write a message only if verbose"""
 
         if self.verbose:
-            print "[Debug] %s " % message
+            print("[Debug] %s " % message)
 
     @classmethod
     def error(cls, error):
@@ -146,7 +146,7 @@ class MitmWifi(object):
         try:
             return config.get(section, value)
 
-        except ConfigParser.NoOptionError:
+        except configparser.NoOptionError:
             return default
 
     @classmethod
@@ -282,12 +282,12 @@ class MitmWifi(object):
 
         self.ip_forwarding_configured = True
 
-        print "Setup complete! You can now join your device."
-        print ""
-        print "  SSID : %s" % config['ssid']
-        print "  Passphrase : %s" % config['key']
-        print ""
-        print "Press Ctrl+C to cancel"
+        print("Setup complete! You can now join your device.")
+        print("")
+        print("  SSID : %s" % config['ssid'])
+        print("  Passphrase : %s" % config['key'])
+        print("")
+        print("Press Ctrl+C to cancel")
 
         # Run forever!
         while 1:
@@ -356,7 +356,7 @@ class MitmWifi(object):
 
         """Open temp named file, dynamically create config"""
 
-        tmp_file = tempfile.NamedTemporaryFile("w+b")
+        tmp_file = tempfile.NamedTemporaryFile(mode="w")
 
         self.hostapd_config = tmp_file.name
 
@@ -394,7 +394,7 @@ class MitmWifi(object):
 
         global_settings = dict()
 
-        config = ConfigParser.ConfigParser()
+        config = configparser.ConfigParser()
 
         config.read(self.config_file)
 
@@ -406,7 +406,7 @@ class MitmWifi(object):
             if section == "Global":
 
                 # Get all globaal keys minus the users.
-                for key, default in default_settings.iteritems():
+                for key, default in default_settings.items():
                     global_settings[key] = self.safe_get(config, section, key, default)
 
                 # Get the user information
@@ -474,7 +474,7 @@ class MitmWifi(object):
                                              (RESERVED_IPS[user_num],
                                               forward_port, proxy_port))
 
-                except ConfigParser.NoOptionError:
+                except configparser.NoOptionError:
                     self.error("Unable to parse section '%s'! Skipping."
                                % section)
 
@@ -654,7 +654,7 @@ def signal_shutdown(signum, stack):
 
     """Handle shutdown signals"""
 
-    print "Shutdown sequence starting!"
+    print("Shutdown sequence starting!")
 
     exit(main_class.shutdown())
 
